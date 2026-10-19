@@ -328,7 +328,7 @@ class HTTPAdapter(BaseAdapter):
 
         return response
 
-    def get_connection(self, url, proxies=None):
+    def get_connection(self, url, proxies=None, verify=None):
         """Returns a urllib3 connection for the given URL. This should not be
         called from user code, and is only exposed for use when subclassing the
         :class:`HTTPAdapter <requests.adapters.HTTPAdapter>`.
@@ -339,6 +339,15 @@ class HTTPAdapter(BaseAdapter):
         """
         proxy = select_proxy(url, proxies)
 
+        pool_kwargs = {}
+        if verify:
+            cert_reqs = "CERT_REQUIRED"
+            if verify is False:
+                cert_reqs = "CERT_NONE"
+            if isinstance(verify, str):
+                pool_kwargs["ca_certs"] = verify
+            pool_kwargs["cert_reqs"] = cert_reqs
+
         if proxy:
             proxy = prepend_scheme_if_needed(proxy, "http")
             proxy_url = parse_url(proxy)
@@ -348,14 +357,16 @@ class HTTPAdapter(BaseAdapter):
                     "and could be missing the host."
                 )
             proxy_manager = self.proxy_manager_for(proxy)
-            conn = proxy_manager.connection_from_url(url)
+            conn = proxy_manager.connection_from_url(url, pool_kwargs=pool_kwargs)
         else:
             # Only scheme should be lower case
             parsed = urlparse(url)
             url = parsed.geturl()
-            conn = self.poolmanager.connection_from_url(url)
+            conn = self.poolmanager.connection_from_url(url, pool_kwargs=pool_kwargs)
 
         return conn
+
+    get_connection.__supports_verify__ = True
 
     def close(self):
         """Disposes of any internal state.
@@ -451,7 +462,10 @@ class HTTPAdapter(BaseAdapter):
         """
 
         try:
-            conn = self.get_connection(request.url, proxies)
+            if getattr(self.get_connection, "__supports_verify__", False):
+                conn = self.get_connection(request.url, proxies, verify=verify)
+            else:
+                conn = self.get_connection(request.url, proxies)
         except LocationValueError as e:
             raise InvalidURL(e, request=request)
 
